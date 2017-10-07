@@ -29,6 +29,8 @@ extern crate bsalloc;
 extern crate lazy_static;
 #[macro_use]
 extern crate log;
+#[macro_use]
+extern crate alloc_tls;
 
 mod sources;
 mod alloc_type;

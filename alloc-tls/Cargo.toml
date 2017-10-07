@@ -1,0 +1,7 @@
+[package]
+name = "alloc-tls"
+version = "0.1.0"
+authors = ["Joshua Liebow-Feeser <hello@joshlf.com>"]
+
+[features]
+dylib = []

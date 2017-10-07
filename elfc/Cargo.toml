@@ -25,6 +25,7 @@ magazine_layer = ["elfmalloc/magazine_layer"]
 logging = ["elfmalloc/print_stats"]
 
 [dependencies]
+alloc-tls = { path = "../alloc-tls", features = ["dylib"] }
 elfmalloc = { path = "../elfmalloc", features = ["nightly", "c-api"] }
 malloc-bind = { path = "../malloc-bind" }
 env_logger = "0.4.3"

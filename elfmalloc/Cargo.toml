@@ -45,6 +45,7 @@ c-api = ["nightly"]
 
 [dependencies]
 alloc-fmt = { path = "../alloc-fmt" }
+alloc-tls = { path = "../alloc-tls" }
 bagpipe = { path = "../bagpipe" }
 bsalloc = "0.1.0"
 lazy_static = "0.2.9"

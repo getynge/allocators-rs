@@ -124,85 +124,85 @@ pub mod global {
     impl DirtyFn for BackgroundDirty {
         fn dirty(_mem: *mut u8) {
             #[cfg(feature = "nightly")]
-            {
-                let _ = LOCAL_DESTRUCTOR_CHAN.try_with(|h| h.send(Husk::Slag(_mem)));
+            unsafe {
+                let _ = LOCAL_DESTRUCTOR_CHAN.with(|h| h.send(Husk::Slag(_mem))).unwrap();
             }
         }
     }
 
-    #[cfg(all(feature = "nightly", target_thread_local))]
-    #[thread_local]
-    /// A thread-local value used to guard against recursive calls to allocation functions during
-    /// TLS initialization.
-    static mut INIT: bool = false;
+    // #[cfg(all(feature = "nightly", target_thread_local))]
+    // #[thread_local]
+    // /// A thread-local value used to guard against recursive calls to allocation functions during
+    // /// TLS initialization.
+    // static mut INIT: bool = false;
+    //
+    // #[cfg(all(feature = "nightly", target_thread_local))]
+    // #[thread_local]
+    // /// A "cached" pointer to the thread-local allocator. This is set after initialization and
+    // /// set to null out prior to destruction.
+    // static mut PTR: *mut ElfMalloc<PA, TieredSizeClasses<ObjectAlloc<PA>>> = ptr::null_mut();
 
-    #[cfg(all(feature = "nightly", target_thread_local))]
-    #[thread_local]
-    /// A "cached" pointer to the thread-local allocator. This is set after initialization and
-    /// set to null out prior to destruction.
-    static mut PTR: *mut ElfMalloc<PA, TieredSizeClasses<ObjectAlloc<PA>>> = ptr::null_mut();
-
-    #[cfg_attr(feature = "cargo-clippy", allow(inline_always))]
-    #[inline(always)]
-    /// Signal that initialization has begun. Note the use of a fall-back/stable method uses an
-    /// atomic integer. This is painfully slow.
-    fn init_begin() {
-        #[cfg(feature = "nightly")]
-        #[cfg(target_thread_local)]
-        unsafe {
-            INIT = true;
-        }
-        #[cfg(feature = "nightly")]
-        #[cfg(not(target_thread_local))]
-        {
-            INITIALIZING.fetch_add(1, Ordering::Relaxed);
-        }
-
-        #[cfg(not(feature = "nightly"))]
-        {
-            INITIALIZING.fetch_add(1, Ordering::Relaxed);
-        }
-    }
-
-    #[cfg_attr(feature = "cargo-clippy", allow(inline_always))]
-    #[inline(always)]
-    /// The inverse of `init_begin`.
-    fn init_end() {
-        #[cfg(feature = "nightly")]
-        #[cfg(target_thread_local)]
-        unsafe {
-            INIT = false;
-        }
-        #[cfg(feature = "nightly")]
-        #[cfg(not(target_thread_local))]
-        {
-            INITIALIZING.fetch_sub(1, Ordering::Relaxed);
-        }
-
-        #[cfg(not(feature = "nightly"))]
-        {
-            INITIALIZING.fetch_sub(1, Ordering::Relaxed);
-        }
-    }
-
-    #[cfg_attr(feature = "cargo-clippy", allow(inline_always))]
-    #[inline(always)]
-    /// Check if we are in a recursive call to an allocation function.
-    fn is_initializing() -> bool {
-        #[cfg(feature = "nightly")]
-        #[cfg(target_thread_local)]
-        unsafe { INIT }
-        #[cfg(feature = "nightly")]
-        #[cfg(not(target_thread_local))]
-        {
-            INITIALIZING.load(Ordering::Relaxed) > 0
-        }
-
-        #[cfg(not(feature = "nightly"))]
-        {
-            INITIALIZING.load(Ordering::Relaxed) > 0
-        }
-    }
+    // #[cfg_attr(feature = "cargo-clippy", allow(inline_always))]
+    // #[inline(always)]
+    // /// Signal that initialization has begun. Note the use of a fall-back/stable method uses an
+    // /// atomic integer. This is painfully slow.
+    // fn init_begin() {
+    //     #[cfg(feature = "nightly")]
+    //     #[cfg(target_thread_local)]
+    //     unsafe {
+    //         INIT = true;
+    //     }
+    //     #[cfg(feature = "nightly")]
+    //     #[cfg(not(target_thread_local))]
+    //     {
+    //         INITIALIZING.fetch_add(1, Ordering::Relaxed);
+    //     }
+    //
+    //     #[cfg(not(feature = "nightly"))]
+    //     {
+    //         INITIALIZING.fetch_add(1, Ordering::Relaxed);
+    //     }
+    // }
+    //
+    // #[cfg_attr(feature = "cargo-clippy", allow(inline_always))]
+    // #[inline(always)]
+    // /// The inverse of `init_begin`.
+    // fn init_end() {
+    //     #[cfg(feature = "nightly")]
+    //     #[cfg(target_thread_local)]
+    //     unsafe {
+    //         INIT = false;
+    //     }
+    //     #[cfg(feature = "nightly")]
+    //     #[cfg(not(target_thread_local))]
+    //     {
+    //         INITIALIZING.fetch_sub(1, Ordering::Relaxed);
+    //     }
+    //
+    //     #[cfg(not(feature = "nightly"))]
+    //     {
+    //         INITIALIZING.fetch_sub(1, Ordering::Relaxed);
+    //     }
+    // }
+    //
+    // #[cfg_attr(feature = "cargo-clippy", allow(inline_always))]
+    // #[inline(always)]
+    // /// Check if we are in a recursive call to an allocation function.
+    // fn is_initializing() -> bool {
+    //     #[cfg(feature = "nightly")]
+    //     #[cfg(target_thread_local)]
+    //     unsafe { INIT }
+    //     #[cfg(feature = "nightly")]
+    //     #[cfg(not(target_thread_local))]
+    //     {
+    //         INITIALIZING.load(Ordering::Relaxed) > 0
+    //     }
+    //
+    //     #[cfg(not(feature = "nightly"))]
+    //     {
+    //         INITIALIZING.load(Ordering::Relaxed) > 0
+    //     }
+    // }
 
 
     #[derive(Clone)]
@@ -248,24 +248,24 @@ pub mod global {
     impl Drop for GlobalAllocator {
         fn drop(&mut self) {
             fn with_chan<F: FnMut(&Sender<Husk>)>(mut f: F) {
-                #[cfg(feature = "nightly")]
-                {
-                    #[cfg(target_thread_local)]
-                    {
-                        unsafe { PTR = ptr::null_mut() };
-                    }
-                    LOCAL_DESTRUCTOR_CHAN
-                        .try_with(|chan| f(chan))
-                        .unwrap_or_else(|_| {
-                            let chan = DESTRUCTOR_CHAN.lock().unwrap().clone();
-                            f(&chan);
-                        })
-                }
-                #[cfg(not(feature = "nightly"))]
-                {
-                    let chan = DESTRUCTOR_CHAN.lock().unwrap().clone();
-                    f(&chan);
-                }
+                // #[cfg(feature = "nightly")]
+                // {
+                //     #[cfg(target_thread_local)]
+                //     {
+                //         unsafe { PTR = ptr::null_mut() };
+                //     }
+                //     LOCAL_DESTRUCTOR_CHAN
+                //         .try_with(|chan| f(chan))
+                //         .unwrap_or_else(|_| {
+                //             let chan = DESTRUCTOR_CHAN.lock().unwrap().clone();
+                //             f(&chan);
+                //         })
+                // }
+                // #[cfg(not(feature = "nightly"))]
+                // {
+                //     let chan = DESTRUCTOR_CHAN.lock().unwrap().clone();
+                //     f(&chan);
+                // }
             }
             // XXX: Why this check?
             //
@@ -288,30 +288,31 @@ pub mod global {
     }
 
     pub unsafe fn get_layout(item: *mut u8) -> (usize /* size */, usize /* alignment */) {
-        let m_block = match get_type(item) {
-            // TODO(ezrosent): this duplicates some work..
-            AllocType::SmallSlag | AllocType::Large => {
-                LOCAL_ELF_HEAP.with(|h| {
-                    (*h.get())
-                        .inner
-                        .as_ref()
-                        .unwrap()
-                        .small_pages
-                        .backing_memory()
-                })
-            }
-            AllocType::BigSlag => {
-                LOCAL_ELF_HEAP.with(|h| {
-                    (*h.get())
-                        .inner
-                        .as_ref()
-                        .unwrap()
-                        .large_pages
-                        .backing_memory()
-                })
-            }
-        };
-        super::elfmalloc_get_layout(m_block, item)
+        unimplemented!()
+        // let m_block = match get_type(item) {
+        //     // TODO(ezrosent): this duplicates some work..
+        //     AllocType::SmallSlag | AllocType::Large => {
+        //         LOCAL_ELF_HEAP.with(|h| {
+        //             h
+        //                 .inner
+        //                 .as_ref()
+        //                 .unwrap()
+        //                 .small_pages
+        //                 .backing_memory()
+        //         })
+        //     }
+        //     AllocType::BigSlag => {
+        //         LOCAL_ELF_HEAP.with(|h| {
+        //             h
+        //                 .inner
+        //                 .as_ref()
+        //                 .unwrap()
+        //                 .large_pages
+        //                 .backing_memory()
+        //         })
+        //     }
+        // };
+        // super::elfmalloc_get_layout(m_block, item)
     }
 
     fn new_handle() -> GlobalAllocator {
@@ -352,104 +353,125 @@ pub mod global {
         };
     }
 
-    lazy_static!{
-        // only used on stable nightly or targets where thread-local is not supported
-        #[allow(unused_variables)]
-        pub static ref INITIALIZING: AtomicUsize = AtomicUsize::new(0);
-    }
+    // lazy_static!{
+    //     // only used on stable nightly or targets where thread-local is not supported
+    //     #[allow(unused_variables)]
+    //     pub static ref INITIALIZING: AtomicUsize = AtomicUsize::new(0);
+    // }
 
     thread_local! {
-        static LOCAL_DESTRUCTOR_CHAN: Sender<Husk> =
-            DESTRUCTOR_CHAN.lock().unwrap().clone();
-        static LOCAL_ELF_HEAP: UnsafeCell<GlobalAllocator> = UnsafeCell::new(new_handle());
+        // static LOCAL_DESTRUCTOR_CHAN: Sender<Husk> =
+            // DESTRUCTOR_CHAN.lock().unwrap().clone();
+        // static LOCAL_ELF_HEAP: UnsafeCell<GlobalAllocator> = UnsafeCell::new(new_handle());
     }
+
+    alloc_thread_local!{ static LOCAL_DESTRUCTOR_CHAN: Sender<Husk> = DESTRUCTOR_CHAN.lock().unwrap().clone(); }
+    alloc_thread_local!{ static LOCAL_ELF_HEAP: GlobalAllocator = new_handle(); }
 
     pub unsafe fn alloc(size: usize) -> *mut u8 {
-        #[cfg(feature = "nightly")]
-        #[cfg(target_thread_local)]
-        {
-            if likely(!PTR.is_null()) {
-                return (*PTR).alloc(size);
-            }
-        }
-        trace!("fallback alloc({:?})", size);
-        if is_initializing() {
-            return super::large_alloc::alloc(size);
-        }
-        init_begin();
-        let res = alloc_inner(size);
-        init_end();
-        res
+        LOCAL_ELF_HEAP
+            .with(|h| h.inner.as_mut().unwrap().alloc(size))
+            .unwrap_or_else(|| super::large_alloc::alloc(size))
+        // #[cfg(feature = "nightly")]
+        // #[cfg(target_thread_local)]
+        // {
+        //     if likely(!PTR.is_null()) {
+        //         return (*PTR).alloc(size);
+        //     }
+        // }
+        // trace!("fallback alloc({:?})", size);
+        // if is_initializing() {
+        //     return super::large_alloc::alloc(size);
+        // }
+        // init_begin();
+        // let res = alloc_inner(size);
+        // init_end();
+        // res
     }
 
-    unsafe fn alloc_inner(size: usize) -> *mut u8 {
-        #[cfg(feature = "nightly")]
-        {
-            LOCAL_ELF_HEAP
-                .try_with(|h| {
-                    let res = (*h.get()).inner.as_mut().unwrap().alloc(size);
-                    PTR = (*h.get()).inner.as_mut().unwrap() as *const _ as *mut _;
-                    res
-                })
-                .unwrap_or_else(|_| super::large_alloc::alloc(size))
-        }
-
-        #[cfg(not(feature = "nightly"))]
-        {
-            LOCAL_ELF_HEAP.with(|h| (*h.get()).inner.as_mut().unwrap().alloc(size))
-        }
-    }
+    // unsafe fn alloc_inner(size: usize) -> *mut u8 {
+    //     #[cfg(feature = "nightly")]
+    //     {
+    //         LOCAL_ELF_HEAP
+    //             .try_with(|h| {
+    //                 let res = (*h.get()).inner.as_mut().unwrap().alloc(size);
+    //                 PTR = (*h.get()).inner.as_mut().unwrap() as *const _ as *mut _;
+    //                 res
+    //             })
+    //             .unwrap_or_else(|_| super::large_alloc::alloc(size))
+    //     }
+    //
+    //     #[cfg(not(feature = "nightly"))]
+    //     {
+    //         LOCAL_ELF_HEAP.with(|h| (*h.get()).inner.as_mut().unwrap().alloc(size))
+    //     }
+    // }
 
     pub unsafe fn realloc(item: *mut u8, new_size: usize) -> *mut u8 {
         aligned_realloc(item, new_size, mem::size_of::<usize>())
     }
 
     pub unsafe fn aligned_realloc(item: *mut u8, new_size: usize, new_alignment: usize) -> *mut u8 {
-        #[cfg(feature = "nightly")]
-        {
-            if likely(!PTR.is_null()) {
-                return (*PTR).realloc(item, new_size, new_alignment);
-            }
-        }
-        alloc_assert!(!is_initializing(), "realloc can't be called recursively");
-        init_begin();
-        let res = LOCAL_ELF_HEAP.with(|h| {
-            (*h.get()).inner.as_mut().unwrap().realloc(
-                item,
-                new_size,
-                new_alignment,
-            )
-        });
-        init_end();
-        res
+        LOCAL_ELF_HEAP
+            .with(|h| h.inner.as_mut().unwrap().realloc(item, new_size, new_alignment))
+            .unwrap()
+        // #[cfg(feature = "nightly")]
+        // {
+        //     if likely(!PTR.is_null()) {
+        //         return (*PTR).realloc(item, new_size, new_alignment);
+        //     }
+        // }
+        // alloc_assert!(!is_initializing(), "realloc can't be called recursively");
+        // init_begin();
+        // let res = LOCAL_ELF_HEAP.with(|h| {
+        //     (*h.get()).inner.as_mut().unwrap().realloc(
+        //         item,
+        //         new_size,
+        //         new_alignment,
+        //     )
+        // });
+        // init_end();
+        // res
     }
 
     pub unsafe fn free(item: *mut u8) {
-        #[cfg(feature = "nightly")]
-        {
-            #[cfg(target_thread_local)]
-            #[thread_local]
-            {
-                if likely(!PTR.is_null()) {
-                    return (*PTR).free(item);
+        return;
+        LOCAL_ELF_HEAP
+            .with(|h| h.inner.as_mut().unwrap().free(item))
+            .unwrap_or_else(|| match get_type(item) {
+                AllocType::Large => {
+                    super::large_alloc::free(item);
                 }
-            }
-            LOCAL_ELF_HEAP
-                .try_with(|h| (*h.get()).inner.as_mut().unwrap().free(item))
-                .unwrap_or_else(|_| match get_type(item) {
-                    AllocType::Large => {
-                        super::large_alloc::free(item);
-                    }
-                    AllocType::SmallSlag | AllocType::BigSlag => {
-                        let chan = DESTRUCTOR_CHAN.lock().unwrap().clone();
-                        let _ = chan.send(Husk::Ptr(item));
-                    }
-                });
-        }
-        #[cfg(not(feature = "nightly"))]
-        {
-            LOCAL_ELF_HEAP.with(|h| (*h.get()).inner.as_mut().unwrap().free(item))
-        }
+                AllocType::SmallSlag | AllocType::BigSlag => {
+                    let chan = DESTRUCTOR_CHAN.lock().unwrap().clone();
+                    let _ = chan.send(Husk::Ptr(item));
+                }
+            });
+        // #[cfg(feature = "nightly")]
+        // {
+        //     #[cfg(target_thread_local)]
+        //     #[thread_local]
+        //     {
+        //         if likely(!PTR.is_null()) {
+        //             return (*PTR).free(item);
+        //         }
+        //     }
+        //     LOCAL_ELF_HEAP
+        //         .try_with(|h| (*h.get()).inner.as_mut().unwrap().free(item))
+        //         .unwrap_or_else(|_| match get_type(item) {
+        //             AllocType::Large => {
+        //                 super::large_alloc::free(item);
+        //             }
+        //             AllocType::SmallSlag | AllocType::BigSlag => {
+        //                 let chan = DESTRUCTOR_CHAN.lock().unwrap().clone();
+        //                 let _ = chan.send(Husk::Ptr(item));
+        //             }
+        //         });
+        // }
+        // #[cfg(not(feature = "nightly"))]
+        // {
+        //     LOCAL_ELF_HEAP.with(|h| (*h.get()).inner.as_mut().unwrap().free(item))
+        // }
     }
 }
 
