@@ -435,7 +435,6 @@ pub mod global {
     }
 
     pub unsafe fn free(item: *mut u8) {
-        return;
         LOCAL_ELF_HEAP
             .with(|h| h.inner.as_mut().unwrap().free(item))
             .unwrap_or_else(|| match get_type(item) {
@@ -1143,7 +1142,13 @@ mod large_alloc {
         #[cfg(debug_assertions)]
         {
             ptr::write_volatile(item, 10);
-            alloc_debug_assert_eq!(base_ptr as usize % page_size(), 0);
+            alloc_debug_assert_eq!(
+                base_ptr as usize % page_size(),
+                0,
+                "base_ptr ({:?}) not a multiple of the page size ({})",
+                base_ptr,
+                page_size()
+            );
         }
         #[cfg(test)]
         {
