@@ -91,8 +91,6 @@ pub mod global {
     #[allow(unused_imports)]
     use super::{CoarseAllocator, DynamicAllocator, DirtyFn, ElfMalloc, MemorySource, ObjectAlloc,
                 PageAlloc, TieredSizeClasses, TypedArray, AllocType, get_type, Source, AllocMap};
-    #[cfg(feature = "nightly")]
-    use super::likely;
     use std::ptr;
     use std::cell::UnsafeCell;
     use std::mem;
@@ -124,9 +122,7 @@ pub mod global {
     impl DirtyFn for BackgroundDirty {
         fn dirty(_mem: *mut u8) {
             #[cfg(feature = "nightly")]
-            unsafe {
-                let _ = LOCAL_DESTRUCTOR_CHAN.with(|h| h.send(Husk::Slag(_mem))).unwrap();
-            }
+            let _ = LOCAL_DESTRUCTOR_CHAN.with(|h| h.send(Husk::Slag(_mem))).unwrap();
         }
     }
 
@@ -288,31 +284,31 @@ pub mod global {
     }
 
     pub unsafe fn get_layout(item: *mut u8) -> (usize /* size */, usize /* alignment */) {
-        unimplemented!()
-        // let m_block = match get_type(item) {
-        //     // TODO(ezrosent): this duplicates some work..
-        //     AllocType::SmallSlag | AllocType::Large => {
-        //         LOCAL_ELF_HEAP.with(|h| {
-        //             h
-        //                 .inner
-        //                 .as_ref()
-        //                 .unwrap()
-        //                 .small_pages
-        //                 .backing_memory()
-        //         })
-        //     }
-        //     AllocType::BigSlag => {
-        //         LOCAL_ELF_HEAP.with(|h| {
-        //             h
-        //                 .inner
-        //                 .as_ref()
-        //                 .unwrap()
-        //                 .large_pages
-        //                 .backing_memory()
-        //         })
-        //     }
-        // };
-        // super::elfmalloc_get_layout(m_block, item)
+        // TODO(joshlf): what about a fallback path when TLS isn't available?
+        let m_block = match get_type(item) {
+            // TODO(ezrosent): this duplicates some work..
+            AllocType::SmallSlag | AllocType::Large => {
+                LOCAL_ELF_HEAP.with(|h| {
+                    (*h.get())
+                        .inner
+                        .as_ref()
+                        .unwrap()
+                        .small_pages
+                        .backing_memory()
+                })
+            }
+            AllocType::BigSlag => {
+                LOCAL_ELF_HEAP.with(|h| {
+                    (*h.get())
+                        .inner
+                        .as_ref()
+                        .unwrap()
+                        .large_pages
+                        .backing_memory()
+                })
+            }
+        };
+        super::elfmalloc_get_layout(m_block.expect("unimplemented: TLS isn't available"), item)
     }
 
     fn new_handle() -> GlobalAllocator {
@@ -366,12 +362,13 @@ pub mod global {
     }
 
     alloc_thread_local!{ static LOCAL_DESTRUCTOR_CHAN: Sender<Husk> = DESTRUCTOR_CHAN.lock().unwrap().clone(); }
-    alloc_thread_local!{ static LOCAL_ELF_HEAP: GlobalAllocator = new_handle(); }
+    alloc_thread_local!{ static LOCAL_ELF_HEAP: UnsafeCell<GlobalAllocator> = UnsafeCell::new(new_handle()); }
 
     pub unsafe fn alloc(size: usize) -> *mut u8 {
-        LOCAL_ELF_HEAP
-            .with(|h| h.inner.as_mut().unwrap().alloc(size))
-            .unwrap_or_else(|| super::large_alloc::alloc(size))
+        super::large_alloc::alloc(size)
+        // LOCAL_ELF_HEAP
+            // .with(|h| h.inner.as_mut().unwrap().alloc(size))
+            // .unwrap_or_else(|| super::large_alloc::alloc(size))
         // #[cfg(feature = "nightly")]
         // #[cfg(target_thread_local)]
         // {
@@ -413,7 +410,7 @@ pub mod global {
 
     pub unsafe fn aligned_realloc(item: *mut u8, new_size: usize, new_alignment: usize) -> *mut u8 {
         LOCAL_ELF_HEAP
-            .with(|h| h.inner.as_mut().unwrap().realloc(item, new_size, new_alignment))
+            .with(|h| (*h.get()).inner.as_mut().unwrap().realloc(item, new_size, new_alignment))
             .unwrap()
         // #[cfg(feature = "nightly")]
         // {
@@ -436,7 +433,7 @@ pub mod global {
 
     pub unsafe fn free(item: *mut u8) {
         LOCAL_ELF_HEAP
-            .with(|h| h.inner.as_mut().unwrap().free(item))
+            .with(|h| (*h.get()).inner.as_mut().unwrap().free(item))
             .unwrap_or_else(|| match get_type(item) {
                 AllocType::Large => {
                     super::large_alloc::free(item);
@@ -1127,9 +1124,12 @@ mod large_alloc {
 
         // begin extra debugging information
         alloc_debug_assert!(!mem.is_null());
+        alloc_debug_assert_eq!(mem as usize % ELFMALLOC_SMALL_CUTOFF, 0);
         let upage: usize = 4096;
         alloc_debug_assert_eq!(mem as usize % upage, 0);
         alloc_debug_assert_eq!(res as usize % upage, 0);
+        alloc_eprintln!("got={:?}, want={:?}", get_commitment(res), (size, mem));
+        alloc_debug_assert_eq!(get_commitment(res), (size, mem));
         #[cfg(test)] SEEN_PTRS.with(|hs| hs.borrow_mut().insert(mem, region_size));
         // end extra debugging information
         res
@@ -1173,6 +1173,12 @@ mod large_alloc {
 
     unsafe fn get_commitment(item: *mut u8) -> (usize, *mut u8) {
         let meta_addr = get_commitment_mut(item);
+        debug_assert_eq!(
+            (*meta_addr).ty,
+            AllocType::Large,
+            "wrong AllocType: {}",
+            *(meta_addr as *mut u8),
+        );
         let base_ptr = (*meta_addr).base;
         let size = (*meta_addr).region_size;
         (size, base_ptr)

@@ -21,3 +21,6 @@ repository = "https://github.com/ezrosent/allocators-rs/tree/master/alloc-tls"
 
 [features]
 dylib = []
+
+[dependencies]
+alloc-fmt = { path = "../alloc-fmt" }

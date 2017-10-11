@@ -15,6 +15,9 @@
 #![feature(core_intrinsics)]
 #![feature(fn_must_use)]
 
+#[macro_use]
+extern crate alloc_fmt;
+
 use std::cell::UnsafeCell;
 use std::mem;
 
@@ -75,7 +78,7 @@ enum TLSValue<T> {
     Dropped,
 }
 
-#[derive(PartialEq, Eq, Debug)]
+#[derive(PartialEq, Eq, Debug, Copy, Clone)]
 enum TLSState {
     Uninitialized,
     Initializing,
@@ -122,67 +125,37 @@ impl<T> TLSSlot<T> {
     /// and then call `f`. If the slot is in the *initialized* state, `with` will call `f`. In
     /// either of these last two cases, `with` will return `Some(r)`, where `r` is the value
     /// returned from the call to `f`.
-    pub unsafe fn with<R, F: FnOnce(&mut T) -> R>(&self, f: F) -> Option<R> {
-        use std::intrinsics::likely;
-        if !likely(dyld_loaded()) {
-            return None;
-        }
+    #[inline]
+    pub fn with<R, F: FnOnce(&T) -> R>(&self, f: F) -> Option<R> {
+        unsafe {
+            use std::intrinsics::likely;
+            if !likely(dyld_loaded()) {
+                return None;
+            }
 
-        let ptr = self.slot.get();
-        match &mut *ptr {
-            &mut TLSValue::Initialized(ref mut t) => return Some(f(t)),
-            &mut TLSValue::Uninitialized => {}
-            &mut TLSValue::Initializing | &mut TLSValue::Dropped => return None,
-        }
+            let ptr = self.slot.get();
+            match &*ptr {
+                &TLSValue::Initialized( ref t) => return Some(f(t)),
+                & TLSValue::Uninitialized => {}
+                & TLSValue::Initializing | & TLSValue::Dropped => return None,
+            }
 
-        // Move into to the Initializing state before registering the destructor in case
-        // registering the destructor involves allocation. If it does, the nested access to this
-        // TLS value will detect that the value is in state Initializing, the call to with will
-        // return None, and a fallback path can be taken.
-        *ptr = TLSValue::Initializing;
-        *ptr = TLSValue::Initialized((self.init)());
-        (self.register_dtor)();
-        self.with(f)
+            // Move into to the Initializing state before registering the destructor in case
+            // registering the destructor involves allocation. If it does, the nested access to this
+            // TLS value will detect that the value is in state Initializing, the call to with will
+            // return None, and a fallback path can be taken.
+            *ptr = TLSValue::Initializing;
+            *ptr = TLSValue::Initialized((self.init)());
+            (self.register_dtor)();
+            self.with(f)
+        }
     }
 
     #[doc(hidden)]
     pub fn drop(&self) {
         unsafe {
             let state = (&*self.slot.get()).state();
-            // if state != TLSState::Initialized {
-            //     eprintln!("TLSValue dropped while in state {:?}", state);
-            //     eprintln!("current stack:");
-            //     backtrace::trace(|frame| {
-            //         let ip = frame.ip();
-            //         backtrace::resolve(ip, |symbol| {
-            //             if let Some(name) = symbol.name() {
-            //                 eprintln!("{}", name);
-            //             } else {
-            //                 eprintln!("<unknown function>");
-            //             }
-            //             if let Some(path) = symbol.filename() {
-            //                 if let Some(s) = path.to_str() {
-            //                     eprint!("\t{}", s);
-            //                 } else {
-            //                     eprint!("\t<unknown file>");
-            //                 }
-            //             } else {
-            //                 eprint!("\t<unknown file>");
-            //             }
-            //             if let Some(line) = symbol.lineno() {
-            //                 eprintln!(":{}", line);
-            //             } else {
-            //                 eprintln!();
-            //             }
-            //         });
-            //         true
-            //     });
-            // }
-            assert!(
-                state == TLSState::Initialized,
-                "TLSValue dropped while in state {:?}",
-                state
-            );
+            alloc_assert_eq!(state, TLSState::Initialized, "TLSValue dropped while in state {:?}", state);
 
             // According to a comment in the standard library, "The macOS implementation of TLS
             // apparently had an odd aspect to it where the pointer we have may be overwritten
@@ -257,7 +230,7 @@ fn dyld_loaded() -> bool {
 #[must_use]
 #[no_mangle]
 pub extern "C" fn dyld_init() {
-    eprintln!("alloc-tls: dyld loaded");
+    alloc_eprintln!("alloc-tls: dyld loaded");
     unsafe {
         DYLD_LOADED = true;
     }
