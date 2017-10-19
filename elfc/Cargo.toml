@@ -14,6 +14,11 @@ license = "Apache-2.0/MIT"
 publish = false
 exclude = ["appveyor.sh", "travis.sh"]
 
+[profile.dev]
+panic = "abort"
+[profile.release]
+panic = "abort"
+
 [lib]
 name = "elfc"
 crate-type = ["cdylib"]

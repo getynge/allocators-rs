@@ -153,6 +153,7 @@ impl<T> TLSSlot<T> {
 
     #[doc(hidden)]
     pub fn drop(&self) {
+        alloc_eprintln!("Dropping TLSValue {:?}", self as *const _);
         unsafe {
             let state = (&*self.slot.get()).state();
             alloc_assert_eq!(state, TLSState::Initialized, "TLSValue dropped while in state {:?}", state);
