@@ -135,9 +135,10 @@ impl<T> TLSSlot<T> {
 
             let ptr = self.slot.get();
             match &*ptr {
-                &TLSValue::Initialized( ref t) => return Some(f(t)),
-                & TLSValue::Uninitialized => {}
-                & TLSValue::Initializing | & TLSValue::Dropped => return None,
+                &TLSValue::Initialized(ref t) => return Some(f(t)),
+                &TLSValue::Uninitialized => {}
+                &TLSValue::Initializing |
+                &TLSValue::Dropped => return None,
             }
 
             // Move into to the Initializing state before registering the destructor in case
@@ -153,10 +154,14 @@ impl<T> TLSSlot<T> {
 
     #[doc(hidden)]
     pub fn drop(&self) {
-        alloc_eprintln!("Dropping TLSValue {:?}", self as *const _);
         unsafe {
             let state = (&*self.slot.get()).state();
-            alloc_assert_eq!(state, TLSState::Initialized, "TLSValue dropped while in state {:?}", state);
+            alloc_assert_eq!(
+                state,
+                TLSState::Initialized,
+                "TLSValue dropped while in state {:?}",
+                state
+            );
 
             // According to a comment in the standard library, "The macOS implementation of TLS
             // apparently had an odd aspect to it where the pointer we have may be overwritten
@@ -204,10 +209,8 @@ impl Drop for CallOnDrop {
 static mut DYLD_LOADED: bool = false;
 
 fn dyld_loaded() -> bool {
-    #[cfg(all(feature = "dylib", target_os = "macos"))]
-    unsafe { DYLD_LOADED }
-    #[cfg(not(all(feature = "dylib", target_os = "macos")))]
-    true
+    #[cfg(all(feature = "dylib", target_os = "macos"))] unsafe { DYLD_LOADED }
+    #[cfg(not(all(feature = "dylib", target_os = "macos")))] true
 }
 
 // On Mac, the C ABI prefixes all symbols with _, so use the symbol name _dyld_init instead of
@@ -231,6 +234,7 @@ fn dyld_loaded() -> bool {
 #[must_use]
 #[no_mangle]
 pub extern "C" fn dyld_init() {
+    // TODO: Remove once elfmalloc Mac support is completed
     alloc_eprintln!("alloc-tls: dyld loaded");
     unsafe {
         DYLD_LOADED = true;
@@ -260,9 +264,7 @@ mod tests {
         let (tx, rx) = channel();
         let _t = thread::spawn(move || unsafe {
             let mut tx = Some(tx);
-            FOO.with(|f| {
-                *f.get() = Some(Foo(tx.take().unwrap()));
-            });
+            FOO.with(|f| { *f.get() = Some(Foo(tx.take().unwrap())); });
         });
         rx.recv().unwrap();
     }

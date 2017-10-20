@@ -121,8 +121,7 @@ pub(crate) mod global {
     struct BackgroundDirty;
     impl DirtyFn for BackgroundDirty {
         fn dirty(_mem: *mut u8) {
-            let _ = with_local_or_clone_chan(|h| h.send(Husk::Slag(_mem)));
-            // let _ = LOCAL_DESTRUCTOR_CHAN.with(|h| h.send(Husk::Slag(_mem))).unwrap();
+            let _ = LOCAL_DESTRUCTOR_CHAN.with(|h| h.send(Husk::Slag(_mem))).unwrap();
         }
     }
 
@@ -168,14 +167,14 @@ pub(crate) mod global {
 
     impl Drop for GlobalAllocator {
         fn drop(&mut self) {
-            // fn with_chan<F: FnMut(&Sender<Husk>)>(mut f: F) {
-            //     LOCAL_DESTRUCTOR_CHAN
-            //         .with(|chan| f(chan))
-            //         .unwrap_or_else(|| {
-            //             let chan = DESTRUCTOR_CHAN.lock().unwrap().clone();
-            //             f(&chan);
-            //         })
-            // }
+            fn with_chan<F: FnMut(&Sender<Husk>)>(mut f: F) {
+                LOCAL_DESTRUCTOR_CHAN
+                    .with(|chan| f(chan))
+                    .unwrap_or_else(|| {
+                        let chan = DESTRUCTOR_CHAN.lock().unwrap().clone();
+                        f(&chan);
+                    })
+            }
 
             // XXX: Why this check?
             //
@@ -189,25 +188,20 @@ pub(crate) mod global {
                 return;
             }
             unsafe {
-                with_local_or_clone_chan(|chan| {
+                with_chan(|chan| {
                     let dyn = ptr::read(self.inner.as_ref().unwrap());
                     let _ = chan.send(Husk::Array(dyn));
                 });
-                // with_chan(|chan| {
-                //     let dyn = ptr::read(self.inner.as_ref().unwrap());
-                //     let _ = chan.send(Husk::Array(dyn));
-                // });
                 ptr::write(&mut self.inner, None);
             };
         }
     }
 
     pub unsafe fn get_layout(item: *mut u8) -> (usize /* size */, usize /* alignment */) {
-        // TODO(joshlf): what about a fallback path when TLS isn't available?
         let m_block = match get_type(item) {
             // TODO(ezrosent): this duplicates some work..
             AllocType::SmallSlag | AllocType::Large => {
-                with_local_or_clone_heap(|h| {
+                with_local_or_clone(|h| {
                     (*h.get())
                         .inner
                         .as_ref()
@@ -217,7 +211,7 @@ pub(crate) mod global {
                 })
             }
             AllocType::BigSlag => {
-                with_local_or_clone_heap(|h| {
+                with_local_or_clone(|h| {
                     (*h.get())
                         .inner
                         .as_ref()
@@ -227,7 +221,6 @@ pub(crate) mod global {
                 })
             }
         };
-        // super::elfmalloc_get_layout(m_block.expect("unimplemented: TLS isn't available"), item)
         super::elfmalloc_get_layout(m_block, item)
     }
 
@@ -272,14 +265,7 @@ pub(crate) mod global {
     alloc_thread_local!{ static LOCAL_DESTRUCTOR_CHAN: Sender<Husk> = DESTRUCTOR_CHAN.lock().unwrap().clone(); }
     alloc_thread_local!{ static LOCAL_ELF_HEAP: UnsafeCell<GlobalAllocator> = UnsafeCell::new(new_handle()); }
 
-    fn with_local_or_clone_chan<F, R>(f: F) -> R
-        where F: Fn(&Sender<Husk>) -> R
-    {
-        LOCAL_DESTRUCTOR_CHAN
-            .with(&f).unwrap_or_else(|| f(&DESTRUCTOR_CHAN.lock().unwrap().clone()))
-    }
-
-    fn with_local_or_clone_heap<F, R>(f: F) -> R
+    fn with_local_or_clone<F, R>(f: F) -> R
         where F: Fn(&UnsafeCell<GlobalAllocator>) -> R
     {
         LOCAL_ELF_HEAP
@@ -287,10 +273,9 @@ pub(crate) mod global {
     }
 
     pub unsafe fn alloc(size: usize) -> *mut u8 {
-        with_local_or_clone_heap(|h| (*h.get()).inner.as_mut().unwrap().alloc(size))
-        // LOCAL_ELF_HEAP
-        //     .with(|h| (*h.get()).inner.as_mut().unwrap().alloc(size))
-        //     .unwrap_or_else(|| super::large_alloc::alloc(size))
+        LOCAL_ELF_HEAP
+            .with(|h| (*h.get()).inner.as_mut().unwrap().alloc(size))
+            .unwrap_or_else(|| super::large_alloc::alloc(size))
     }
 
     pub unsafe fn realloc(item: *mut u8, new_size: usize) -> *mut u8 {
@@ -298,39 +283,21 @@ pub(crate) mod global {
     }
 
     pub unsafe fn aligned_realloc(item: *mut u8, new_size: usize, new_alignment: usize) -> *mut u8 {
-        with_local_or_clone_heap(|h| (*h.get()).inner.as_mut().unwrap().realloc(item, new_size, new_alignment))
-        // LOCAL_ELF_HEAP
-        //     .with(|h| (*h.get()).inner.as_mut().unwrap().realloc(item, new_size, new_alignment))
-        //     .unwrap_or_else(|| {
-        //         // All objects are only guaranteed to be word-aligned except for powers of two. Powers of
-        //         // two up to 1MiB are aligned to their size. Past that size, only page-alignment is
-        //         // guaranteed.
-        //         let new = if l.size().is_power_of_two() || l.align() <= mem::size_of::<usize>() {
-        //             global::alloc(l.size())
-        //         } else {
-        //             global::alloc(l.size().next_power_of_two())
-        //         };
-        //
-        //
-        //         std::ptr::copy_nonoverlapping(item, new, std::cmp::min(old_size, new_size));
-        //         free(item);
-        //         new
-        //     })
+        with_local_or_clone(|h| (*h.get()).inner.as_mut().unwrap().realloc(item, new_size, new_alignment))
     }
 
     pub unsafe fn free(item: *mut u8) {
-        with_local_or_clone_heap(|h| (*h.get()).inner.as_mut().unwrap().free(item));
-        // LOCAL_ELF_HEAP
-        //     .with(|h| (*h.get()).inner.as_mut().unwrap().free(item))
-        //     .unwrap_or_else(|| match get_type(item) {
-        //         AllocType::Large => {
-        //             super::large_alloc::free(item);
-        //         }
-        //         AllocType::SmallSlag | AllocType::BigSlag => {
-        //             let chan = DESTRUCTOR_CHAN.lock().unwrap().clone();
-        //             let _ = chan.send(Husk::Ptr(item));
-        //         }
-        //     });
+        LOCAL_ELF_HEAP
+            .with(|h| (*h.get()).inner.as_mut().unwrap().free(item))
+            .unwrap_or_else(|| match get_type(item) {
+                AllocType::Large => {
+                    super::large_alloc::free(item);
+                }
+                AllocType::SmallSlag | AllocType::BigSlag => {
+                    let chan = DESTRUCTOR_CHAN.lock().unwrap().clone();
+                    let _ = chan.send(Husk::Ptr(item));
+                }
+            });
     }
 }
 
@@ -998,7 +965,8 @@ mod large_alloc {
 
     pub unsafe fn free(item: *mut u8) {
         let (size, base_ptr) = get_commitment(item);
-        if size == 0 && base_ptr.is_null() {
+        use std::intrinsics::unlikely;
+        if unlikely(size == 0 && base_ptr.is_null()) {
             return;
         }
 
