@@ -137,8 +137,7 @@ impl<T> TLSSlot<T> {
             match &*ptr {
                 &TLSValue::Initialized(ref t) => return Some(f(t)),
                 &TLSValue::Uninitialized => {}
-                &TLSValue::Initializing |
-                &TLSValue::Dropped => return None,
+                &TLSValue::Initializing | &TLSValue::Dropped => return None,
             }
 
             // Move into to the Initializing state before registering the destructor in case
@@ -209,8 +208,10 @@ impl Drop for CallOnDrop {
 static mut DYLD_LOADED: bool = false;
 
 fn dyld_loaded() -> bool {
-    #[cfg(all(feature = "dylib", target_os = "macos"))] unsafe { DYLD_LOADED }
-    #[cfg(not(all(feature = "dylib", target_os = "macos")))] true
+    #[cfg(all(feature = "dylib", target_os = "macos"))]
+    unsafe { DYLD_LOADED }
+    #[cfg(not(all(feature = "dylib", target_os = "macos")))]
+    true
 }
 
 // On Mac, the C ABI prefixes all symbols with _, so use the symbol name _dyld_init instead of
@@ -264,7 +265,9 @@ mod tests {
         let (tx, rx) = channel();
         let _t = thread::spawn(move || unsafe {
             let mut tx = Some(tx);
-            FOO.with(|f| { *f.get() = Some(Foo(tx.take().unwrap())); });
+            FOO.with(|f| {
+                *f.get() = Some(Foo(tx.take().unwrap()));
+            });
         });
         rx.recv().unwrap();
     }
