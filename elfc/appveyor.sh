@@ -16,6 +16,3 @@ fi
 
 cargo build
 RUST_BACKTRACE=1 cargo test
-for feature in nightly; do
-  RUST_BACKTRACE=1 cargo test --features "$feature"
-done

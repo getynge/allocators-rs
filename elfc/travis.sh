@@ -12,6 +12,3 @@ set -e
 
 travis-cargo --only nightly build
 RUST_BACKTRACE=1 travis-cargo --only nightly test
-for feature in nightly; do
-  RUST_BACKTRACE=1 travis-cargo --only nightly test -- --features "$feature"
-done
