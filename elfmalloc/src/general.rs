@@ -1034,12 +1034,18 @@ mod tests {
             }
         }
 
-        test_and_free(8, |size, align| alloc_assert_eq!((size, align), (8, 8)));
+        test_and_free(8, |size, align| {
+            alloc_assert!(size >= 8);
+            alloc_assert!(align >= 8);
+        });
         test_and_free(24, |size, align| {
             alloc_assert!(size >= 24);
             alloc_assert!(align >= 8);
         });
-        test_and_free(512, |size, align| alloc_assert_eq!((size, align), (512, 512)));
+        test_and_free(512, |size, align| {
+            alloc_assert!(size >= 512);
+            alloc_assert!(align >= 512);
+        });
         test_and_free(4 << 20, |size, align| {
             alloc_assert_eq!((size, align), (4 << 20, mmap::page_size()))
         });
