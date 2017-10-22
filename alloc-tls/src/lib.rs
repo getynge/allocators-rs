@@ -248,6 +248,7 @@ mod tests {
     use std::sync::mpsc::{channel, Sender};
     use std::cell::UnsafeCell;
     use std::thread;
+    use super::*;
 
     struct Foo(Sender<()>);
 
@@ -273,16 +274,18 @@ mod tests {
     }
 
     #[test]
-    fn drop() {
+    fn lifecycle() {
         static mut DROPPED: bool = false;
-        use super::CallOnDrop;
         fn drop() {
             unsafe { DROPPED = true }
         }
         alloc_thread_local!{ static FOO: CallOnDrop = CallOnDrop(drop); }
 
-        thread::spawn(|| unsafe { FOO.with(|_| {}).unwrap() })
-            .join()
+        thread::spawn(|| unsafe {
+            assert_eq!((&*FOO.slot.get()).state(), TLSState::Uninitialized);
+            FOO.with(|_| {}).unwrap();
+            assert_eq!((&*FOO.slot.get()).state(), TLSState::Initialized);
+        }).join()
             .unwrap();
         assert_eq!(unsafe { DROPPED }, true);
     }
