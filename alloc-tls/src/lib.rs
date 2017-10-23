@@ -14,6 +14,7 @@
 #![feature(const_unsafe_cell_new)]
 #![feature(core_intrinsics)]
 #![feature(fn_must_use)]
+#![feature(thread_local)]
 
 #[macro_use]
 extern crate alloc_fmt;
@@ -52,6 +53,7 @@ use std::mem;
 #[macro_export]
 macro_rules! alloc_thread_local {
     (static $name:ident: $t: ty = $init:expr;) => (
+        #[thread_local]
         static $name: $crate::TLSSlot<$t> = {
             fn __init() -> $t { $init }
 
@@ -155,9 +157,8 @@ impl<T> TLSSlot<T> {
     pub fn drop(&self) {
         unsafe {
             let state = (&*self.slot.get()).state();
-            alloc_assert_eq!(
-                state,
-                TLSState::Initialized,
+            alloc_assert!(
+                state == TLSState::Uninitialized || state == TLSState::Initialized,
                 "TLSValue dropped while in state {:?}",
                 state
             );
