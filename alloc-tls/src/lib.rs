@@ -109,8 +109,15 @@ impl<T> TLSValue<T> {
 /// A `TLSSlot` should be initialized using the `internal_thread_local!` macro. See its
 /// documentation for details on declaring and using thread-local variables.
 pub struct TLSSlot<T> {
-    slot: UnsafeCell<TLSValue<T>>,
+    // TODO: Use repr(C) to ensure that this field comes first so that we don't need to do extra
+    // offset math to access it?
+
+    // This field is a pointer to the T in slot (in state Initialized) or NULL (in any other
+    // state). This allows us to make the fast path a single pointer comparison, which is faster in
+    // practice than matching on a four-variant enum.
     ptr: UnsafeCell<*const T>,
+    // The actual value itself.
+    slot: UnsafeCell<TLSValue<T>>,
     init: fn() -> T,
     register_dtor: fn(),
 }
@@ -155,10 +162,14 @@ impl<T> TLSSlot<T> {
             }
     }
 
+    // Use #[cold] to make it more likely that LLVM won't inline the call to with_slow in with,
+    // which would bloat the instruction cache.
     #[cold]
     unsafe fn with_slow<R, F: FnOnce(&T) -> R>(&self, f: F) -> Option<R> {
         let ptr = self.slot.get();
         match &*ptr {
+            // this branch should never be taken because if we're in state Initialized, then
+            // self.ptr should be non-NULL, so we should have taken the fast path in with.
             &TLSValue::Initialized(_) => unreachable!(),
             &TLSValue::Uninitialized => {
                 // Move into to the Initializing state before registering the destructor in
@@ -250,11 +261,9 @@ impl Drop for CallOnDrop {
 #[cfg(all(feature = "dylib", target_os = "macos"))]
 static mut DYLD_LOADED: bool = false;
 
+#[cfg(all(feature = "dylib", target_os = "macos"))]
 fn dyld_loaded() -> bool {
-    #[cfg(all(feature = "dylib", target_os = "macos"))]
     unsafe { DYLD_LOADED }
-    #[cfg(not(all(feature = "dylib", target_os = "macos")))]
-    true
 }
 
 // On Mac, the C ABI prefixes all symbols with _, so use the symbol name _dyld_init instead of
