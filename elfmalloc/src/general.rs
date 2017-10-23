@@ -130,9 +130,7 @@ pub(crate) mod global {
     ///
     /// The reason we have a wrapper is for this module's custom `Drop` implementation, mentioned
     /// in the module documentation.
-    struct GlobalAllocator {
-        inner: Option<ElfMalloc<PA, TieredSizeClasses<ObjectAlloc<PA>>>>,
-    }
+    struct GlobalAllocator(ElfMalloc<PA, TieredSizeClasses<ObjectAlloc<PA>>>);
     unsafe impl Send for GlobalAllocator {}
 
     /// The type of the global instance of the allocator.
@@ -176,23 +174,24 @@ pub(crate) mod global {
                     })
             }
 
-            // XXX: Why this check?
-            //
-            // We have found that for some reason, this destructor can be called more than once on
-            // the same value. This could be a peculiarity of the TLS implementation, or it could
-            // be a bug in the code here. Regardless; without this check there are some cases in
-            // which this benchmark drops Arc-backed data-structures multiple times, leading to
-            // segfaults either here or in the background thread.
-            if self.inner.is_none() {
-                alloc_eprintln!("{:?} dropped twice!", self as *const _);
-                return;
-            }
+            // // XXX: Why this check?
+            // //
+            // // We have found that for some reason, this destructor can be called more than once on
+            // // the same value. This could be a peculiarity of the TLS implementation, or it could
+            // // be a bug in the code here. Regardless; without this check there are some cases in
+            // // which this benchmark drops Arc-backed data-structures multiple times, leading to
+            // // segfaults either here or in the background thread.
+            // if self.inner.is_none() {
+            //     alloc_eprintln!("{:?} dropped twice!", self as *const _);
+            //     return;
+            // }
             unsafe {
+                alloc_eprintln!("dropping: {:?}", &self.0 as *const _);
                 with_chan(|chan| {
-                    let dyn = ptr::read(self.inner.as_ref().unwrap());
+                    let dyn = ptr::read(&self.0 as *const _);
                     let _ = chan.send(Husk::Array(dyn));
                 });
-                ptr::write(&mut self.inner, None);
+                // ptr::write(&mut self.inner, None);
             };
         }
     }
@@ -203,9 +202,7 @@ pub(crate) mod global {
             AllocType::SmallSlag | AllocType::Large => {
                 with_local_or_clone(|h| {
                     (*h.get())
-                        .inner
-                        .as_ref()
-                        .unwrap()
+                        .0
                         .small_pages
                         .backing_memory()
                 })
@@ -213,9 +210,7 @@ pub(crate) mod global {
             AllocType::BigSlag => {
                 with_local_or_clone(|h| {
                     (*h.get())
-                        .inner
-                        .as_ref()
-                        .unwrap()
+                        .0
                         .large_pages
                         .backing_memory()
                 })
@@ -225,9 +220,7 @@ pub(crate) mod global {
     }
 
     fn new_handle() -> GlobalAllocator {
-        GlobalAllocator {
-            inner: Some(ELF_HEAP.inner.as_ref().expect("heap uninitialized").clone()),
-        }
+        GlobalAllocator(ELF_HEAP.inner.as_ref().expect("heap uninitialized").clone())
     }
 
     impl Drop for GlobalAllocProvider {
@@ -249,7 +242,7 @@ pub(crate) mod global {
                         let msg: Husk = msg;
                         match msg {
                             Husk::Array(alloc) => mem::drop(DynamicAllocator(alloc)),
-                            Husk::Ptr(p) => local_alloc.inner.as_mut().unwrap().free(p),
+                            Husk::Ptr(p) => local_alloc.0.free(p),
                             Husk::Slag(s) => dirty_slag(s),
                         }
                         continue
@@ -277,7 +270,7 @@ pub(crate) mod global {
 
     pub unsafe fn alloc(size: usize) -> *mut u8 {
         LOCAL_ELF_HEAP
-            .with(|h| (*h.get()).inner.as_mut().unwrap().alloc(size))
+            .with(|h| (*h.get()).0.alloc(size))
             .unwrap_or_else(|| super::large_alloc::alloc(size))
     }
 
@@ -286,12 +279,12 @@ pub(crate) mod global {
     }
 
     pub unsafe fn aligned_realloc(item: *mut u8, new_size: usize, new_alignment: usize) -> *mut u8 {
-        with_local_or_clone(|h| (*h.get()).inner.as_mut().unwrap().realloc(item, new_size, new_alignment))
+        with_local_or_clone(|h| (*h.get()).0.realloc(item, new_size, new_alignment))
     }
 
     pub unsafe fn free(item: *mut u8) {
         LOCAL_ELF_HEAP
-            .with(|h| (*h.get()).inner.as_mut().unwrap().free(item))
+            .with(|h| (*h.get()).0.free(item))
             .unwrap_or_else(|| match get_type(item) {
                 AllocType::Large => {
                     super::large_alloc::free(item);

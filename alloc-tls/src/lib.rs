@@ -139,23 +139,20 @@ impl<T> TLSSlot<T> {
     /// `with` is unsafe because if `f` panics, it causes undefined behavior.
     #[inline]
     pub unsafe fn with<R, F: FnOnce(&T) -> R>(&self, f: F) -> Option<R> {
-            use std::intrinsics::likely;
-            if !likely(dyld_loaded()) {
-                return None;
+        use std::intrinsics::likely;
+            #[cfg(all(feature = "dylib", target_os = "macos"))]
+            {
+                if !likely(dyld_loaded()) {
+                    return None;
+                }
             }
 
-            let mptr = *(&self.ptr as *const _ as *mut *mut T);
-            if likely(!mptr.is_null()) {
-                Some(f(&*mptr))
+            if likely(!(*self.ptr.get()).is_null()) {
+                let ptr = *self.ptr.get();
+                Some(f(&*ptr))
             } else {
                 self.with_slow(f)
             }
-            // if likely(!(*self.ptr.get()).is_null()) {
-                // let ptr = *self.ptr.get();
-                // Some(f(&*ptr))
-            // } else {
-                // self.with_slow(f)
-            // }
     }
 
     #[cold]
