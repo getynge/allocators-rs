@@ -24,6 +24,9 @@ exclude = ["appveyor.sh", "travis.sh"]
 [[bin]]
 name = "bench_vec"
 path = "src/bin/bench_vec.rs"
+[[bin]]
+name = "bench"
+path = "src/bin/bench.rs"
 
 [features]
 default = []
