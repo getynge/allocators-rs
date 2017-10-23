@@ -11,6 +11,7 @@
 #![feature(thread_local_state)]
 #![feature(thread_local)]
 #![feature(const_fn)]
+#![feature(const_size_of)]
 #![feature(cfg_target_thread_local)]
 #![feature(core_intrinsics)]
 #![feature(const_ptr_null_mut)]

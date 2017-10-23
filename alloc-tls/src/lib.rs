@@ -186,10 +186,13 @@ impl<T> TLSSlot<T> {
                 "TLSValue dropped while in state {:?}",
                 state
             );
-            // alloc_assert!(!(*self.ptr.get()).is_null());
 
+            // TODO: Figure out why it's possible to be dropped in state Uninitialized.
+            if state == TLSState::Uninitialized {
+                return;
+            }
 
-            // *self.ptr.get() = ptr::null_mut();
+            alloc_assert!(!(*self.ptr.get()).is_null(), "null ptr in state: {:?}", state);
 
             // According to a comment in the standard library, "The macOS implementation of TLS
             // apparently had an odd aspect to it where the pointer we have may be overwritten
@@ -203,6 +206,7 @@ impl<T> TLSSlot<T> {
             // Thus, it's important that we use mem::replace here. That way, the value is brought
             // into tmp and then dropped while it is a local variable, avoiding this problem.
             let tmp = mem::replace(&mut *self.slot.get(), TLSValue::Dropped);
+            *self.ptr.get() = ptr::null_mut();
             mem::drop(tmp);
     }
 }
