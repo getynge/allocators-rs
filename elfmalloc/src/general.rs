@@ -121,7 +121,7 @@ pub(crate) mod global {
     struct BackgroundDirty;
     impl DirtyFn for BackgroundDirty {
         fn dirty(_mem: *mut u8) {
-            let _ = LOCAL_DESTRUCTOR_CHAN.with(|h| h.send(Husk::Slag(_mem))).unwrap();
+            let _ = unsafe { LOCAL_DESTRUCTOR_CHAN.with(|h| h.send(Husk::Slag(_mem))).unwrap() };
         }
     }
 
@@ -167,7 +167,7 @@ pub(crate) mod global {
 
     impl Drop for GlobalAllocator {
         fn drop(&mut self) {
-            fn with_chan<F: FnMut(&Sender<Husk>)>(mut f: F) {
+            unsafe fn with_chan<F: FnMut(&Sender<Husk>)>(mut f: F) {
                 LOCAL_DESTRUCTOR_CHAN
                     .with(|chan| f(chan))
                     .unwrap_or_else(|| {
@@ -268,8 +268,11 @@ pub(crate) mod global {
     fn with_local_or_clone<F, R>(f: F) -> R
         where F: Fn(&UnsafeCell<GlobalAllocator>) -> R
     {
-        LOCAL_ELF_HEAP
-            .with(&f).unwrap_or_else(|| f(&UnsafeCell::new(new_handle())))
+        unsafe {
+            LOCAL_ELF_HEAP
+                .with(&f).unwrap_or_else(|| f(&UnsafeCell::new(new_handle())))
+        }
+
     }
 
     pub unsafe fn alloc(size: usize) -> *mut u8 {

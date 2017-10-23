@@ -15,6 +15,7 @@
 #![feature(core_intrinsics)]
 #![feature(fn_must_use)]
 #![feature(thread_local)]
+#![feature(allow_internal_unsafe)]
 
 #[macro_use]
 extern crate alloc_fmt;
@@ -51,15 +52,16 @@ use std::mem;
 /// and it is the caller's responsibility to figure out a workaround for its task that does not
 /// involve accessing the thread-local variable.
 #[macro_export]
+#[allow_internal_unsafe]
 macro_rules! alloc_thread_local {
     (static $name:ident: $t: ty = $init:expr;) => (
         #[thread_local]
         static $name: $crate::TLSSlot<$t> = {
             fn __init() -> $t { $init }
 
-            fn __drop() { $name.drop(); }
+            unsafe fn __drop() { $name.drop(); }
 
-            thread_local!{ static DROPPER: $crate::CallOnDrop = $crate::CallOnDrop(__drop); }
+            thread_local!{ static DROPPER: $crate::CallOnDrop = unsafe { $crate::CallOnDrop::new(__drop) }; }
 
             // DROPPER will only be dropped if it is first initialized, so we provide this function
             // to be called when the TLSSlot is first initialized. The act of calling DROPPER.with
@@ -127,9 +129,11 @@ impl<T> TLSSlot<T> {
     /// and then call `f`. If the slot is in the *initialized* state, `with` will call `f`. In
     /// either of these last two cases, `with` will return `Some(r)`, where `r` is the value
     /// returned from the call to `f`.
+    ///
+    /// # Safety
+    /// `with` is unsafe because if `f` panics, it causes undefined behavior.
     #[inline]
-    pub fn with<R, F: FnOnce(&T) -> R>(&self, f: F) -> Option<R> {
-        unsafe {
+    pub unsafe fn with<R, F: FnOnce(&T) -> R>(&self, f: F) -> Option<R> {
             use std::intrinsics::likely;
             if !likely(dyld_loaded()) {
                 return None;
@@ -150,12 +154,10 @@ impl<T> TLSSlot<T> {
             *ptr = TLSValue::Initialized((self.init)());
             (self.register_dtor)();
             self.with(f)
-        }
     }
 
     #[doc(hidden)]
-    pub fn drop(&self) {
-        unsafe {
+    pub unsafe fn drop(&self) {
             let state = (&*self.slot.get()).state();
             alloc_assert!(
                 state == TLSState::Uninitialized || state == TLSState::Initialized,
@@ -176,7 +178,6 @@ impl<T> TLSSlot<T> {
             // into tmp and then dropped while it is a local variable, avoiding this problem.
             let tmp = mem::replace(&mut *self.slot.get(), TLSValue::Dropped);
             mem::drop(tmp);
-        }
     }
 }
 
@@ -188,11 +189,22 @@ unsafe impl<T> Sync for TLSSlot<T> {}
 // value is a CallOnDrop holding a function which will invoke the drop method on the TLSSlot. This
 // function is called in CallOnDrop's Drop implementation.
 #[doc(hidden)]
-pub struct CallOnDrop(pub fn());
+pub struct CallOnDrop(unsafe fn());
+
+impl CallOnDrop {
+    // new is unsafe because constructing a CallOnDrop will cause f to be called when it is
+    // dropped, so if new weren't unsafe, it would provide a way for safe code to invoke unsafe
+    // code without an unsafe block.
+    pub unsafe fn new(f: unsafe fn()) -> CallOnDrop{
+        CallOnDrop(f)
+    }
+}
 
 impl Drop for CallOnDrop {
     fn drop(&mut self) {
-        (self.0)();
+        unsafe {
+            (self.0)();
+        }
     }
 }
 
