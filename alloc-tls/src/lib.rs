@@ -10,12 +10,13 @@
 //! The `tls` module implements thread-local storage that, unlike the standard library's
 //! implementation, is safe for use in a global allocator.
 
+#![feature(allow_internal_unsafe)]
 #![feature(const_fn)]
 #![feature(const_unsafe_cell_new)]
 #![feature(core_intrinsics)]
 #![feature(fn_must_use)]
+#![feature(test)]
 #![feature(thread_local)]
-#![feature(allow_internal_unsafe)]
 
 #[macro_use]
 extern crate alloc_fmt;
@@ -258,10 +259,13 @@ pub extern "C" fn dyld_init() {
 #[cfg(test)]
 mod tests {
     // Modified from the Rust standard library
+
+    extern crate test;
     use std::sync::mpsc::{channel, Sender};
     use std::cell::UnsafeCell;
     use std::thread;
     use super::*;
+    use self::test::{Bencher, black_box};
 
     struct Foo(Sender<()>);
 
@@ -301,5 +305,17 @@ mod tests {
         }).join()
             .unwrap();
         assert_eq!(unsafe { DROPPED }, true);
+    }
+
+    #[bench]
+    fn bench_tls(b: &mut Bencher) {
+        alloc_thread_local!{ static FOO: UnsafeCell<usize> = UnsafeCell::new(0); }
+        b.iter(|| unsafe {
+            FOO.with(|foo| unsafe {
+                let inner = foo.get();
+                (*inner) += 1;
+                black_box(*inner);
+            });
+        })
     }
 }
