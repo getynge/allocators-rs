@@ -93,7 +93,7 @@ pub(crate) mod global {
                 PageAlloc, TieredSizeClasses, TypedArray, AllocType, get_type, Source, AllocMap};
     use std::ptr;
     use std::cell::UnsafeCell;
-    use std::mem;
+    use std::mem::{ManuallyDrop, self};
     #[allow(unused_imports)]
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::mpsc::{channel, Sender};
@@ -131,7 +131,15 @@ pub(crate) mod global {
     /// The reason we have a wrapper is for this module's custom `Drop` implementation, mentioned
     /// in the module documentation.
     struct GlobalAllocator {
-        alloc: ElfMalloc<PA, TieredSizeClasses<ObjectAlloc<PA>>>,
+        // GlobalAllocator's Drop implementation reads this field (using ptr::read) and sends it
+        // over a channel. This invalidates the underlying memory, but of course Rust doesn't know
+        // that, so if this field were of the type ElfMalloc<...>, the field's drop method would be
+        // run after GlobalAllocator's drop method returned. We use ManuallyDrop to prevent that
+        // from happening.
+        alloc: ManuallyDrop<ElfMalloc<PA, TieredSizeClasses<ObjectAlloc<PA>>>>,
+        // In some rare cases, we've observed that a thread-local GlobalAllocator is spuriously
+        // dropped twice. Until we figure out why and fix it, we just detect when it's happening
+        // and make the second drop call a no-op.
         dropped: bool,
     }
     unsafe impl Send for GlobalAllocator {}
@@ -177,36 +185,26 @@ pub(crate) mod global {
                     })
             }
 
-            // // XXX: Why this check?
-            // //
-            // // We have found that for some reason, this destructor can be called more than once on
-            // // the same value. This could be a peculiarity of the TLS implementation, or it could
-            // // be a bug in the code here. Regardless; without this check there are some cases in
-            // // which this benchmark drops Arc-backed data-structures multiple times, leading to
-            // // segfaults either here or in the background thread.
-
-            // const size: usize = mem::size_of::<GlobalAllocator>()/(8*mem::size_of::<usize>());
-            // if unsafe { ptr::read(self as *const _ as *const [[usize; 8]; size]) == [[0; 8]; size] } {
-            //     alloc_eprintln!("{:?} dropped twice!", self as *const _);
-            //     return;
-            // }
-            // if self.inner.is_none() {
-            //     alloc_eprintln!("{:?} dropped twice!", self as *const _);
-            //     return;
-            // }
+            // XXX: Why this check?
+            //
+            // We have found that for some reason, this destructor can be called more than once on
+            // the same value. This could be a peculiarity of the TLS implementation, or it could
+            // be a bug in the code here. Regardless; without this check there are some cases in
+            // which this benchmark drops Arc-backed data-structures multiple times, leading to
+            // segfaults either here or in the background thread.
             if self.dropped {
                 alloc_eprintln!("{:?} dropped twice!", self as *const _);
                 return;
             }
             unsafe {
-                alloc_eprintln!("dropping: {:?}", &self.alloc as *const _);
                 with_chan(|chan| {
-                    let dyn = ptr::read(&self.alloc);
+                    // After we read the alloc field with ptr::read, the underlying memory should
+                    // be treated as uninitialized, but Rust doesn't know this. We use ManuallyDrop
+                    // to ensure that Rust doesn't try to drop the field after this method returns.
+                    let dyn = ManuallyDrop::into_inner(ptr::read(&self.alloc));
                     let _ = chan.send(Husk::Array(dyn));
                 });
                 self.dropped = true;
-                // ptr::write(self as *const _ as *mut [[usize; 8]; size], [[0; 8]; size]);
-                // ptr::write(&mut self.inner, None);
             };
         }
     }
@@ -236,7 +234,7 @@ pub(crate) mod global {
 
     fn new_handle() -> GlobalAllocator {
         GlobalAllocator {
-            alloc: ELF_HEAP.inner.as_ref().expect("heap uninitialized").clone(),
+            alloc: ManuallyDrop::new(ELF_HEAP.inner.as_ref().expect("heap uninitialized").clone()),
             dropped: false,
         }
     }
