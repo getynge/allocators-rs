@@ -12,6 +12,7 @@
 
 #![feature(allow_internal_unsafe)]
 #![feature(const_fn)]
+#![feature(const_ptr_null_mut)]
 #![feature(const_unsafe_cell_new)]
 #![feature(core_intrinsics)]
 #![feature(fn_must_use)]
@@ -23,6 +24,7 @@ extern crate alloc_fmt;
 
 use std::cell::UnsafeCell;
 use std::mem;
+use std::ptr;
 
 /// Declare a thread-local variable.
 ///
@@ -108,6 +110,7 @@ impl<T> TLSValue<T> {
 /// documentation for details on declaring and using thread-local variables.
 pub struct TLSSlot<T> {
     slot: UnsafeCell<TLSValue<T>>,
+    ptr: UnsafeCell<*const T>,
     init: fn() -> T,
     register_dtor: fn(),
 }
@@ -117,6 +120,7 @@ impl<T> TLSSlot<T> {
     pub const fn new(init: fn() -> T, register_dtor: fn()) -> TLSSlot<T> {
         TLSSlot {
             slot: UnsafeCell::new(TLSValue::Uninitialized),
+            ptr: UnsafeCell::new(ptr::null_mut()),
             init,
             register_dtor,
         }
@@ -140,21 +144,41 @@ impl<T> TLSSlot<T> {
                 return None;
             }
 
-            let ptr = self.slot.get();
-            match &*ptr {
-                &TLSValue::Initialized(ref t) => return Some(f(t)),
-                &TLSValue::Uninitialized => {}
-                &TLSValue::Initializing | &TLSValue::Dropped => return None,
+            let mptr = *(&self.ptr as *const _ as *mut *mut T);
+            if likely(!mptr.is_null()) {
+                Some(f(&*mptr))
+            } else {
+                self.with_slow(f)
             }
+            // if likely(!(*self.ptr.get()).is_null()) {
+                // let ptr = *self.ptr.get();
+                // Some(f(&*ptr))
+            // } else {
+                // self.with_slow(f)
+            // }
+    }
 
-            // Move into to the Initializing state before registering the destructor in case
-            // registering the destructor involves allocation. If it does, the nested access to this
-            // TLS value will detect that the value is in state Initializing, the call to with will
-            // return None, and a fallback path can be taken.
-            *ptr = TLSValue::Initializing;
-            *ptr = TLSValue::Initialized((self.init)());
-            (self.register_dtor)();
-            self.with(f)
+    #[cold]
+    unsafe fn with_slow<R, F: FnOnce(&T) -> R>(&self, f: F) -> Option<R> {
+        let ptr = self.slot.get();
+        match &*ptr {
+            &TLSValue::Initialized(_) => unreachable!(),
+            &TLSValue::Uninitialized => {
+                // Move into to the Initializing state before registering the destructor in
+                // case registering the destructor involves allocation. If it does, the nested
+                // access to this TLS value will detect that the value is in state
+                // Initializing, the call to with will return None, and a fallback path can be
+                // taken.
+                *ptr = TLSValue::Initializing;
+                *ptr = TLSValue::Initialized((self.init)());
+                if let &TLSValue::Initialized(ref t) = &*ptr {
+                    *self.ptr.get() = t as *const _;
+                }
+                (self.register_dtor)();
+                self.with(f)
+            }
+            &TLSValue::Initializing | &TLSValue::Dropped => return None,
+        }
     }
 
     #[doc(hidden)]
@@ -165,6 +189,10 @@ impl<T> TLSSlot<T> {
                 "TLSValue dropped while in state {:?}",
                 state
             );
+            // alloc_assert!(!(*self.ptr.get()).is_null());
+
+
+            // *self.ptr.get() = ptr::null_mut();
 
             // According to a comment in the standard library, "The macOS implementation of TLS
             // apparently had an odd aspect to it where the pointer we have may be overwritten
